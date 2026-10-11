@@ -1,0 +1,143 @@
+name: Saturn - render, release & YouTube live
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "What to run"
+        type: choice
+        default: render_and_stream
+        options: [render_only, render_and_stream, stream_only]
+      width:    { description: "Video width",  default: "1920" }
+      height:   { description: "Video height", default: "1080" }
+      fps:      { description: "Frames per second", default: "30" }
+      duration: { description: "Loop length in seconds (video is looped on the live stream)", default: "90" }
+      release_tag:
+        description: "Release tag (empty = saturn-<run number>). Required for stream_only."
+        default: ""
+      stream_hours:
+        description: "How long to stream (max 5.5, GitHub jobs stop at 6h)"
+        default: "5.5"
+      restart_when_done:
+        description: "Start a new stream job when this one ends (near 24/7 live)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # create the release
+  actions: write    # allow the workflow to restart itself
+
+concurrency:
+  group: saturn-live
+  cancel-in-progress: false
+
+jobs:
+  render:
+    if: ${{ inputs.mode != 'stream_only' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install ffmpeg, npm packages and headless Chromium
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          npm install
+          npx playwright install --with-deps chromium
+
+      - name: Download real Saturn textures (NASA-based, CC BY 4.0)
+        run: bash scripts/download-textures.sh
+
+      - name: Render video (Three.js -> frames -> H.264)
+        run: |
+          node scripts/render.mjs \
+            --width=${{ inputs.width }} --height=${{ inputs.height }} \
+            --fps=${{ inputs.fps }} --duration=${{ inputs.duration }} \
+            --label=LIVE --require-real-textures --out=out/saturn.mp4
+
+      - name: Publish GitHub Release with the video
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IN_TAG: ${{ inputs.release_tag }}
+        run: |
+          TAG="${IN_TAG:-saturn-${GITHUB_RUN_NUMBER}}"
+          printf '%s\n' \
+            "Photoreal Saturn rendered with Three.js." \
+            "" \
+            "Textures: Solar System Scope (https://www.solarsystemscope.com/textures/), CC BY 4.0, based on NASA imagery." \
+            > notes.md
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" out/saturn.mp4 --clobber
+          else
+            gh release create "$TAG" out/saturn.mp4 --title "Saturn video $TAG" --notes-file notes.md
+          fi
+          URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${TAG}/saturn.mp4"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Saturn video ready"
+            echo ""
+            echo "**Video URL (copy this):** $URL"
+            echo ""
+            echo "**Release page:** ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "VIDEO URL: $URL"
+
+  stream:
+    needs: [render]
+    # run after render succeeded, or alone when render was skipped (stream_only)
+    if: ${{ always() && inputs.mode != 'render_only' && (needs.render.result == 'success' || needs.render.result == 'skipped') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 358
+    steps:
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Download the video from the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.render.outputs.tag || inputs.release_tag }}
+        run: |
+          if [ -z "$TAG" ]; then echo "::error::release_tag is required for stream_only"; exit 1; fi
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern saturn.mp4 --dir .
+          ls -lh saturn.mp4
+
+      - name: Stream to YouTube Live (looped)
+        env:
+          YOUTUBE_STREAM_KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
+          HOURS: ${{ inputs.stream_hours }}
+        run: |
+          if [ -z "$YOUTUBE_STREAM_KEY" ]; then
+            echo "::error::Add the repository secret YOUTUBE_STREAM_KEY (YouTube Studio > Go live > Stream key)"; exit 1
+          fi
+          FPS=$(ffprobe -v 0 -select_streams v:0 -of csv=p=0 -show_entries stream=r_frame_rate saturn.mp4 | awk -F/ '{print int($1/$2)}')
+          HEIGHT=$(ffprobe -v 0 -select_streams v:0 -of csv=p=0 -show_entries stream=height saturn.mp4)
+          if [ "$HEIGHT" -ge 1080 ]; then VB=6000k; BUF=12000k; else VB=3500k; BUF=7000k; fi
+          echo "Streaming ${HEIGHT}p${FPS} at $VB for ${HOURS}h"
+          set +e
+          timeout --signal=INT "${HOURS}h" ffmpeg -hide_banner -loglevel warning -re -stream_loop -1 -i saturn.mp4 \
+            -c:v libx264 -preset veryfast -profile:v high -b:v $VB -maxrate $VB -bufsize $BUF \
+            -pix_fmt yuv420p -g $((FPS*2)) -keyint_min $((FPS*2)) -sc_threshold 0 \
+            -c:a aac -b:a 128k -ar 44100 \
+            -f flv "rtmp://a.rtmp.youtube.com/live2/${YOUTUBE_STREAM_KEY}"
+          code=$?
+          set -e
+          if [ $code -eq 124 ]; then echo "Reached the requested stream time."; exit 0; fi
+          exit $code
+
+      - name: Start the next stream job (keeps the live going)
+        if: ${{ success() && inputs.restart_when_done }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.render.outputs.tag || inputs.release_tag }}
+        run: |
+          gh workflow run saturn-youtube.yml --repo "$GITHUB_REPOSITORY" \
+            -f mode=stream_only -f release_tag="$TAG" -f stream_hours="${{ inputs.stream_hours }}" \
+            -f restart_when_done=true
