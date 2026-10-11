@@ -1,0 +1,19 @@
+{
+  "name": "saturn-live",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Photoreal Saturn + rings in Three.js, rendered to video and streamed to YouTube with GitHub Actions",
+  "scripts": {
+    "start": "node scripts/serve.mjs",
+    "textures": "bash scripts/download-textures.sh",
+    "render": "node scripts/render.mjs",
+    "render:test": "node scripts/render.mjs --width=640 --height=360 --fps=24 --frames=48 --out=out/test.mp4"
+  },
+  "dependencies": {
+    "three": "0.170.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.48.0"
+  }
+}

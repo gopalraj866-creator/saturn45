@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Saturn</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  canvas { position: fixed; inset: 0; display: block; z-index: 0; }
+  #hud { position: fixed; inset: 0; z-index: 1; pointer-events: none; color: #fff;
+         font-family: "Helvetica Neue", Helvetica, Arial, "DejaVu Sans", sans-serif;
+         text-shadow: 0 1px 12px rgba(0,0,0,.8); }
+  #title { position: absolute; left: 3.2vw; top: 3.6vh; }
+  #title h1 { margin: 0; font-size: 3.4vh; font-weight: 300; letter-spacing: .6em; }
+  #title p { margin: .6vh 0 0; font-size: 1.5vh; letter-spacing: .35em; opacity: .65; text-transform: uppercase; }
+  #live { position: absolute; right: 3.2vw; top: 3.8vh; font-size: 1.7vh; letter-spacing: .25em;
+          display: none; align-items: center; gap: .8vh; }
+  #live i { width: 1.3vh; height: 1.3vh; border-radius: 50%; background: #ff2d2d; display: inline-block; }
+  #cap { position: absolute; left: 0; right: 0; bottom: 8vh; text-align: center; font-size: 3vh;
+         font-weight: 300; letter-spacing: .06em; opacity: 0; padding: 0 6vw; }
+  #credit { position: absolute; left: 3.2vw; bottom: 2.4vh; font-size: 1.25vh; opacity: .45; letter-spacing: .08em; }
+</style>
+<script type="importmap">
+{ "imports": {
+    "three": "/node_modules/three/build/three.module.js",
+    "three/addons/": "/node_modules/three/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="hud">
+  <div id="title"><h1>SATURN</h1><p>The ringed planet</p></div>
+  <div id="live"><i></i><span id="livetxt">LIVE</span></div>
+  <div id="cap"></div>
+  <div id="credit">Textures: Solar System Scope (CC BY 4.0), based on NASA imagery &middot; Real-time WebGL with Three.js</div>
+</div>
+<script type="module" src="./main.js"></script>
+</body>
+</html>
